@@ -7,9 +7,9 @@
 # This script allows for an analysis of 464.7 km of stream beds
 # The analysis database consists of 40,354 positions in the known
 # territory, i.e. 20,177 points of presence of stream beds and 20,177 
-# points of absence of stream beds. Analyses were performed using
+# points of absence of stream beds. Analysis were performed using
 # an ROC/AUC curve approach of logistic regressions and a 
-# classification tree approach. The analyses were separated according
+# classification tree approach. The analysis were separated according
 # to a three-class hydrological classification.
 # ------------------------------------------------------------------------------
 
