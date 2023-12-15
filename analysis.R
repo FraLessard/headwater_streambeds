@@ -2,7 +2,8 @@
 # Created by Francis Lessard and Naïm Perreault as part of the project
 # on the mapping of streambeds by the Laboratoire d'Hydrologie
 # Forestière de l'Université Laval
-# Updated on 2022-10-13
+# Created on 2022-09-01
+# Updated on 2023-12-15
 
 # This script allows for an analysis of 464.7 km of stream beds
 # The analysis database consists of 40,354 positions in the known
@@ -13,7 +14,7 @@
 # to a three-class hydrological classification.
 # ------------------------------------------------------------------------------
 
-# Install the libraries ====
+# Install the libraries ----
 read_library <- function(...) {
   invisible(lapply(substitute(list(...))[-1], function(x) 
     library(deparse(x), character.only = TRUE)))
@@ -42,7 +43,7 @@ read_library(tidyverse,
 
 
 
-# Creation of functions ====
+# Creation of functions ----
 # Classification tree
 cart <- function(train,
                  test,
@@ -108,39 +109,47 @@ hydrological.classification <- function(data){
 
 
 
-# Set the working directory and import the data =====
-#C:\0_Donnees\03_Projets\Articles_Hydro\Cart\Soumission_JH\Premiere_Soumission\Data
-# csetwd(readClipboard()) # Copy the working directory to clipboard # If necessary
-st_read("presence_absence.shp") %>%
-  mutate(sbp = factor(sbp)) %>% 
-  mutate(type = factor(type)) %>%
-  mutate(dep = factor(dep)) %>%
-  mutate(ter = factor(ter)) %>% 
-  mutate(cer = factor(cer)) %>%
+# Import the data ----
+rstudioapi::getSourceEditorContext()$path %>%
+  dirname %>% 
+  paste0(.,"/data.gpkg") %>% 
+  st_read(layer = "presence_absence") %>%
+  mutate(sbp = factor(sbp),
+         type = factor(type),
+         dep = factor(dep),
+         ter = factor(ter),
+         cer = factor(cer)) %>%
+  mutate(slope = tan(slope)*100) %>% # Convert slope from radians to percent 
   hydrological.classification -> data
 # sbp = Streambed presence : 0 = Absence / 1 = Presence
-# type = Type of stream : Absence, Diffuse, Intermittent or Permanent
-
-table(data$chs)
+# type = Type of stream : Absence, Diffuse, Intermittent or Perennial
 
 # Channel head
-
-st_read("channel_stream_head.shp") %>%
+rstudioapi::getSourceEditorContext()$path %>%
+  dirname %>% 
+  paste0(.,"/data.gpkg") %>% 
+  st_read(layer = "channel_head") %>%
   mutate(type = factor(type)) %>% 
   mutate(dep = factor(dep)) %>%
   mutate(ter = factor(ter)) %>% 
-  mutate(mean_corr = mean*9) %>% 
+  mutate(mean_corr = mean*9) %>%
+  mutate(slope = tan(slope)*100) %>% 
   hydrological.classification %>% 
   filter(type == "Channel head") -> channelhead
 # type = Type of theshold : Channel head and stream head
+# Get the median of channel head by hydrological classes
+channelhead %>% 
+  st_drop_geometry %>% 
+  group_by(chs) %>% 
+  summarise(med = median(mean_corr)) -> channelhead_median
+
+channelhead$chs %>% table
+
+
+
+
   
-table(channelhead$chs)
-
-
-
-
-
-# DownSample by ecological reference framework natural region ====
+# DownSample by ecological reference framework natural region ----
 i <- 1
 for (c in data$cer %>% unique) {
   set.seed(1) # Set.seed to maintain replicability
@@ -157,6 +166,7 @@ for (c in data$cer %>% unique) {
 }
 rm(data_temp,i,c)
 
+data$chs %>%  table
 data1$sbp %>% table # The number of 0 (absence of a streambed) is equal to the number of 1 (presence of a streambed)
 data1 %>% group_by(sbp, cer) %>% summarise(l = length(sbp)) %>% pivot_wider(names_from = sbp, values_from = l) %>% mutate(p = `0`/(`0` + `1`))
 
@@ -174,19 +184,18 @@ rm(data)
 
 
 
-# Correlation matrix ====
+# Correlation matrix ----
 data1 %>%
   dplyr::select(D8, PROB, TPI) %>% # Selection of only numeric variables
   cor %>% 
   corrplot(method = "number", type = "upper", addCoef.col = "black", tl.srt = 45)
-dev.copy(pdf, "./figures/correlation_matrix.pdf", width=6, height=6)
-dev.off()
 
 
 
 
 
-# Logistic regression of analysis variables ====
+
+# Logistic regression of analysis variables ----
 # Creation of the results table
 matrix(nrow=9,ncol=4) %>% 
   as_tibble() -> results_sens
@@ -253,7 +262,7 @@ rm(var, i, c, v, data1_geom_temp, mod, rocc)
 
 
 
-# Creation of models ====
+# Creation of models ----
 # Model 1 : GRHQ
 # The "Near" tool of ArcGIS has previously been used with all segments of the GRHQ, a distance of less than 6 m is considered an accurate model
 data1_geom %<>% 
@@ -265,12 +274,6 @@ data1_geom %<>%
 
 # Model 2 : D8 - Median
 # Everything above the median of the D8 with a focal statistic of 6 m by hydrological classification is considered an accurate model
-# Get the median of channel head by hydrological classes
-channelhead %>% 
-  st_drop_geometry %>% 
-  group_by(chs) %>% 
-  summarise(med = median(mean_corr)) -> channelhead_median
-
 data1_geom %>% 
   filter(chs == "Shallow soil") %>% 
   mutate(mod2 = ifelse(D8 > channelhead_median$med[[1]], 1, 0) %>% factor) -> data1_geom_g
@@ -358,7 +361,7 @@ rm(data1_geom_g, data1_geom_i, data1_geom_pi)
 # Shallow soil
 data1_geom %>% 
   filter(chs == "Shallow soil") -> data1_geom_g
-cart(data1_geom_g, data1_geom_g, sbp~PROB, 2, 2, nrow(data1_geom_g)*0.02) -> data1_geom_g$mod4
+cart(data1_geom_g, data1_geom_g, sbp~PROB+TPI, 3, 6, nrow(data1_geom_g)*0.02) -> data1_geom_g$mod4
 model_cart -> model_cart_g
 scores
 
@@ -440,43 +443,51 @@ rm(c, i, id, mod, scores, data1_geom_temp)
 
 
 
-# Figures====
+# Figures ----
 # Channel head
-channelhead_median %<>% 
-  mutate(med = med/10000)
-
 channelhead %>% 
   ggplot +
   theme_classic(base_size = 10) +
-  theme(text = element_text(size=25),
-        title = element_text(size=25),
+  theme(panel.grid.major.y = element_line(colour = "darkgrey", linetype = "dashed"),
+        text = element_text(size=20),
+        title = element_text(size=20),
         axis.text.x = element_text(color="black")) +
   guides(color = "none",
          size = "none") +
   xlab("Hydrological class") +  
   ylab("Drainage area (ha)") +
-  ylim(c(0,50)) +
-  scale_x_discrete(labels = c("Shallow soil \n (n = 542)","Thick soil with \n high infiltration rate \n (n = 411)","Thick soil with \n low infiltration rate \n (n = 80)")) + 
-  scale_color_manual(values=c("deepskyblue", "darkolivegreen3", "darkorchid4")) +
-  geom_boxplot(aes(chs, mean_corr/10000, color = chs)) +
-  geom_text(data = channelhead_median ,mapping = aes(x = c(1.5,2.5,3.5), y = med, label = paste0(round(med, digits = 2), " ha")), size = 6)
-dev.copy(pdf, "./figures/channel_head.pdf", width=14, height=8)
-dev.off()
+  scale_x_discrete(labels = c("Shallow soil\n(n = 542)","Thick soil\nwith high\ninfiltration\nrate\n(n = 411)","Thick soil\nwith low\ninfiltration\nrate\n(n = 80)")) + 
+  scale_y_continuous(breaks=c(0,1,2,3,4,5,10,20), label = c(0,"", "", "", "", 5, 10, 20)) +
+  scale_color_manual(values = c("deepskyblue", "darkolivegreen3", "darkorchid4")) +
+  geom_boxplot(aes(chs, mean_corr/10000, color = chs), width = 0.8) +
+  coord_cartesian(ylim = c(1,25)) #+
+  #geom_text(data = channelhead_median ,mapping = aes(x = c(1.5,2.5,3.5), y = med, label = paste0(round(med, digits = 2), " ha")), size = 8)
+rstudioapi::getSourceEditorContext()$path %>%
+  dirname %>% 
+  paste0(.,"/channel_head_figure_3.jpg") %>% 
+  ggsave(width=6, height=8, dpi = 300)
 
 
 # Classification tree
+rstudioapi::getSourceEditorContext()$path %>%
+  dirname %>% 
+  paste0(.,"/classification_trees_figure_4.jpg") %>% 
+  jpeg(width=10, height=4.5, units = 'in', res = 300)
+
 layout(mat = matrix(c(1, 2, 3), nrow = 1, ncol = 3),
-       heights = c(2), # Heights of the two rows
-       widths = c(1, 2, 2)) # Widths of the two columns
-par(mar = c(0, 0, 2, 0))
-# par(mai = c(0, 0, 2, 0))
+       heights = c(1), # Heights of the two rows
+       widths = c(1)) # Widths of the two columns
+
+par(mar = c(0, 0, 2, 0), cex = 1, pty = "s")
 rpart.plot(model_cart_g, box.palette = "RdYlGn")
-mtext("Shallow soil", side=3)
+mtext("Shallow soil", side=3, cex = 1)
+par(mar = c(0, 0, 2, 0), cex = 1.5, pty = "s")
 rpart.plot(model_cart_i, box.palette = "RdYlGn")
-mtext("Thick soil with high infiltration rate", side=3)
+mtext("Thick soil with high\ninfiltration rate", side=3, cex = 1)
+par(mar = c(0, 0, 2, 0), cex = 1.5, pty = "s")
 rpart.plot(model_cart_pi, box.palette = "RdYlGn")
-mtext("Thick soil with low infiltration rate", side=3)
-dev.copy(pdf, "./figures/classification_trees.pdf", width=10, height=6)
+mtext("Thick soil with low\ninfiltration rate", side=3, cex = 1)
+
 dev.off()
 
 
@@ -489,9 +500,9 @@ ggplot() +
             mapping =  aes((100-specificities)/100, sensitivities/100, color = variable), size=1) + # Allows you to create a table containing all the information necessary to put the AUC as a label in the figure
   geom_point(data = results,
              mapping = aes(1-specificity, sensitivity, shape = model), size = 5) +
-  scale_shape_discrete(labels = c("GRHQ", "Channel head", "Max Kappa", "CART")) +
+  scale_shape_manual(values = c(16,15,18,17), labels = c("GRHQ", "Channel head", "Max Kappa", "CART")) +
   scale_color_manual(values=c("brown1", "darkgreen", "cadetblue3")) +
-  facet_wrap(~chs, scales='free') +
+  facet_wrap(~chs, scales='free', labeller = label_wrap_gen(multi_line = TRUE)) +
   theme_bw() +
   guides(shape = guide_legend(override.aes = list(size=5), title="Model")) +
   theme(axis.line = element_line(colour = "black"),
@@ -504,10 +515,61 @@ ggplot() +
   geom_abline(slope = 1, linetype = 2) + # Allows you to set the diagonal of a ROC curve (no effect)
   xlab("False positive rate") +
   ylab("True positive rate") +
-  geom_text_repel(x = 0.80, y = 0.40, seed = 5, max.overlaps = 20, 
+  geom_text_repel(x = 0.80, y = 0.35, seed = 5, max.overlaps = 20, segment.color = NA, 
                   mapping = aes(label = paste0(variable ," : ",auc)), 
-                  data = label_table , size = 8, direction = "y", 
+                  data = label_table , size = 7, direction = "y", 
                   color = c("brown1", "darkgreen", "cadetblue3") %>% rep(3)) + # To put the AUC in text in the figure
-  geom_text_repel(results, mapping = aes(x = commission, y = 1-omission, label = round(kappa, digits = 2)), nudge_x = 0.1, size = 7) 
-dev.copy(pdf, "./figures/roc_auc.pdf", width=20, height=10)
-dev.off()
+  geom_text_repel(results, mapping = aes(x = commission, y = 1-omission, label = round(kappa, digits = 2)), nudge_x = 0.2, size = 7)
+rstudioapi::getSourceEditorContext()$path %>%
+  dirname %>% 
+  paste0(.,"/roc_auc_figure_5.jpg") %>% 
+  ggsave(width=20, height=10, dpi = 300)
+
+
+# Supplementary materials - Slope
+for(c in channelhead$chs %>% unique){
+  channelhead %>%
+    st_drop_geometry %>% 
+    mutate(logd8 = log10(mean_corr)) %>% 
+    mutate(logd8cat = cut(logd8, seq(3,6,0.2))) %>% 
+    group_by(logd8cat, chs) %>% 
+    summarise(n = n(),
+              slp = mean(slope),
+              ld8 = mean(logd8)) %>% 
+    filter(chs == c) -> channelhead_group  
+  
+  data1 %>%
+    st_drop_geometry %>%
+    filter(chs == c) %>% 
+    mutate(logd8 = log10(D8)) %>% 
+    mutate(logd8cat = ntile(logd8, ceiling(nrow(.)/100))) %>%
+    group_by(logd8cat, chs) %>% 
+    summarise(slp = mean(slope),
+              ld8 = mean(logd8)) %>% 
+    ggplot +
+    theme_bw() +
+    theme(axis.line = element_line(colour = "black"),
+          panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          strip.background=element_rect(colour="white", fill="white"),
+          text = element_text(size=15)) +
+    xlab("Drainage area (ha)") +
+    ylab("Slope (%)") +
+    labs(size = "Channel head (n)") +
+    geom_point(aes(ld8, slp)) +
+    geom_smooth(aes(ld8, slp), se = F) +
+    geom_point(aes(ld8, slp, size = n), channelhead_group, color = "red") +
+    scale_size_continuous(breaks = ceiling(seq(min(channelhead_group$n), max(channelhead_group$n), length.out = 4))) +
+    scale_x_continuous(breaks = c(2:7), labels = c("0.01",
+                                                   "0.1",
+                                                   "1",
+                                                   "10",
+                                                   "100",
+                                                   "1 000")) -> g
+  print(g)
+  rstudioapi::getSourceEditorContext()$path %>%
+    dirname %>% 
+    paste0(.,"/slope_area_",c,".jpg") %>% 
+    ggsave(width=12, height=6, dpi = 300)
+}
